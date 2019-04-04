@@ -23,9 +23,9 @@ import (
 	"fmt"
 )
 
-const PARALLELISM = 3
-const BATCH_SIZE = 5
-const WORK_ITEM_COUNT = 50
+const PARALLELISM = 16
+const BATCH_SIZE = 100
+const WORK_ITEM_COUNT = 32000
 
 const JOB_ID = "foo"
 const NAMESPACE = "myproject"
@@ -39,11 +39,13 @@ const POD_POLLING_INTERVAL = 1 * time.Second
 
 var finalResult map[string]interface{}
 var finalErrors []string
+var queue []*apiv1.Pod
+var chunkCount int
 
 func main() {
 	finalResult = make(map[string]interface{})
 	finalErrors = make([]string, 0)
-
+	chunkCount = int(math.Ceil(float64(WORK_ITEM_COUNT) / float64(BATCH_SIZE)))
 	rand.Seed(time.Now().Unix())
 
 	// TODO: in-cluster config
@@ -75,59 +77,54 @@ func main() {
 
 	k8client := kubernetes.NewForConfigOrDie(config)
 
-	//pods, err := k8client.CoreV1().Pods("myproject").List(metav1.ListOptions{})
+	createWorkQueue()
+
+	// createInitialPods(k8client)
+
+	startPollingPodEndpoints(k8client)
+
+	log.Println("Job done, writing results to ./output.json and ./erroredBoxes.txt")
+	resultJson, err := json.MarshalIndent(finalResult, "", "  ")
+	if err != nil {
+		fmt.Println("error marshalling final result:", err)
+	}
+
+	errorsJson, err := json.MarshalIndent(finalErrors, "", "  ")
+	if err != nil {
+		fmt.Println("error marshalling errors:", err)
+	}
+
+	err = ioutil.WriteFile("./output.json", resultJson, 0644)
+	if err != nil {
+		log.Fatalln("Error writing output to file, writing to STDOUT instead")
+		log.Println(string(resultJson))
+	}
+
+	err = ioutil.WriteFile("./erroredBoxes.txt", errorsJson, 0644)
+	if err != nil {
+		log.Fatalln("Error writing erroredBoxes to file, writing to STDOUT instead")
+		log.Println(string(resultJson))
+	}
+
+	//log.Println("Final result")
+	//currentResultJson, err := json.MarshalIndent(finalResult, "", "  ")
 	//if err != nil {
-	//	panic(err.Error())
+	//	fmt.Println("error marshalling current result:", err)
 	//}
-	//fmt.Printf("There are %d pods in the cluster\n", len(pods.Items))
-
-	queue := createWorkQueue()
-
-	createInitialPods(queue, k8client)
-
-	startPollingPodEndpoints(queue, k8client)
-	// go startWatchingPods()
-
-	// select {}
-
-	// watch for 2 things:
-	// - 1. pod resources: if there is one failed, get the info of that one and add it to the queue
-	// - 2. pod states: whenever a pod's "status" endpoint says "DONE", get the data from it and kill it
-	//      - then get the next item from the queue and create a pod for that
-
-	//for _, podReq := range queue {
-	//	var resp = &apiv1.Pod{}
+	//log.Println(string(currentResultJson))
 	//
-	//	if resp, err = k8client.CoreV1().Pods(NAMESPACE).Create(podReq); err != nil {
-	//		log.Fatal(err)
-	//		panic(err.Error())
-	//	}
-	//
-	//	fmt.Printf("Pod created: %s\n", resp)
-	//
-	//	break
-	//}
-
-	//{
-	//	pods, err := k8client.CoreV1().Pods("myproject").List(metav1.ListOptions{})
-	//	if err != nil {
-	//		panic(err.Error())
-	//	}
-	//	fmt.Printf("There are %d pods in the cluster\n", len(pods.Items))
-	//}
+	//log.Println("Final errors")
+	//log.Println(finalErrors)
 }
-
-//func startWatchingPods() {
-//	log.Printf("Starting pod resource watching")
-//
-//	// TODO
-//}
 
 // poll pod list, then check if the pods are done.
 // if done, record the output and the errors. then pop one from the queue and create a new pod.
 // if not done, don't do anything. it will be checked in the next poll.
-func startPollingPodEndpoints(queue chan *apiv1.Pod, k8client *kubernetes.Clientset) {
+func startPollingPodEndpoints(k8client *kubernetes.Clientset) {
 	log.Printf("Starting pod endpoint polling")
+
+	startTime := time.Now()
+	var podsCreated = 0
 
 	for {
 		<-time.After(POD_POLLING_INTERVAL)
@@ -148,8 +145,8 @@ func startPollingPodEndpoints(queue chan *apiv1.Pod, k8client *kubernetes.Client
 				// do nothing and hope that it will be known in later poll
 			case apiv1.PodFailed:
 				log.Printf("Pod seems failed. Going to add it to queue again. %s %s %s", pod.Name, pod.Status.Phase, pod.Status.PodIP)
-				// TODO: delete the pod first
-				queue <- &pod // TODO: not sure if this would work . probably not as the UID and the name can't be duplicate
+				// TODO: delete the existing pod first
+				queue = append(queue, &pod) // TODO: not sure if this would work . probably not as the UID and the name can't be duplicate
 			case apiv1.PodSucceeded:
 				// do nothing as the pod is probably terminated by this program
 			case apiv1.PodRunning:
@@ -165,19 +162,46 @@ func startPollingPodEndpoints(queue chan *apiv1.Pod, k8client *kubernetes.Client
 			}
 		}
 
-		if
+		if len(pods.Items) < PARALLELISM && len(queue) > 0 {
+			podRequest := queue[0]
+			queue = queue[1:]
 
-		//log.Println("Current result")
-		//currentResultJson, err := json.MarshalIndent(finalResult, "", "  ")
-		//if err != nil {
-		//	fmt.Println("error marshalling current result:", err)
-		//}
-		//log.Println(string(currentResultJson))
-		//
-		//log.Println("Current errors")
-		//log.Println(finalErrors)
+			// not interested in the response. we're polling them anyway
+			if _, err := createPod(podRequest, k8client); err != nil {
+				log.Println("Unable to create pod. Gonna readd to the queue")
+				log.Fatal(err)
+				queue = append(queue, podRequest)
+			} else {
+				podsCreated++
+			}
+		}
+
+		if len(pods.Items) == 0 && len(queue) == 0 {
+			return
+		}
+
+		timeElapsed := time.Since(startTime)
+		avgTimeForPod := timeElapsed.Nanoseconds() / int64(podsCreated)
+		reminingItemCount := len(queue)
+		estimatedRemainingTime := int64(reminingItemCount) * avgTimeForPod
+
+		log.Printf("Queue size: %3d, total pods created: %4d, elapsed time: %s, avg time for a pod: %s, estimated time remaining: %s \n",
+			len(queue),
+			podsCreated,
+			timeElapsed.Truncate(time.Second),
+			time.Duration(avgTimeForPod).Truncate(time.Second),
+			time.Duration(estimatedRemainingTime).Truncate(time.Second))
 	}
 }
+
+func fmtDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	h := d / time.Hour
+	d -= h * time.Hour
+	m := d / time.Minute
+	return fmt.Sprintf("%02d:%02d", h, m)
+}
+
 func deletePod(k8client *kubernetes.Clientset, pod apiv1.Pod) {
 	err := k8client.CoreV1().Pods(NAMESPACE).Delete(pod.Name, metav1.NewDeleteOptions(0))
 	if err != nil {
@@ -219,7 +243,7 @@ func getResultFromPod(pod apiv1.Pod) []byte {
 func getErrorsFromPod(pod apiv1.Pod) []byte {
 	resp, err := http.Get("http://" + pod.Status.PodIP + ":3000/errors")
 	if err != nil {
-		log.Printf("Unable to read errors of the Pod %s %s %s", pod.Name, pod.Status.Phase, pod.Status.PodIP)
+		log.Printf("Unable to read errors of the Pod %s %s %s . Gonna try again later, perhaps the server in the pod is not up yet", pod.Name, pod.Status.Phase, pod.Status.PodIP)
 		log.Print(err)
 		panic(err) // TODO: not the best way
 	}
@@ -243,25 +267,25 @@ func isPodDone(pod apiv1.Pod) bool {
 	return false
 }
 
-func createInitialPods(queue chan *apiv1.Pod, k8client *kubernetes.Clientset) {
-	for i := 0; i < PARALLELISM; i++ {
-		podRequest := <-queue
-
-		// not interested in the response. we're polling them anyway
-		if _, err := createPod(podRequest, k8client); err != nil {
-			log.Printf("Unable to create pod \n")
-			log.Fatal(err)
-		}
-	}
-}
+//func createInitialPods(k8client *kubernetes.Clientset) {
+//	for i := 0; i < PARALLELISM; i++ {
+//		podRequest := queue[0]
+//		queue = queue[1:]
+//
+//		// not interested in the response. we're polling them anyway
+//		if _, err := createPod(podRequest, k8client); err != nil {
+//			log.Printf("Unable to create pod \n")
+//			log.Fatal(err)
+//		}
+//	}
+//}
 
 func createPod(podReq *apiv1.Pod, k8client *kubernetes.Clientset) (*apiv1.Pod, error) {
 	return k8client.CoreV1().Pods(NAMESPACE).Create(podReq);
 }
 
-func createWorkQueue() chan *apiv1.Pod {
-	chunkCount := int(math.Ceil(float64(WORK_ITEM_COUNT) / float64(BATCH_SIZE)))
-	queue := make(chan *apiv1.Pod, chunkCount)
+func createWorkQueue() {
+	queue = make([]*apiv1.Pod, 0)
 
 	for i := 0; i < chunkCount; i++ {
 		podReq := &apiv1.Pod{
@@ -300,8 +324,6 @@ func createWorkQueue() chan *apiv1.Pod {
 			},
 		}
 
-		queue <- podReq
+		queue = append(queue, podReq)
 	}
-
-	return queue
 }
