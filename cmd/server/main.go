@@ -12,7 +12,6 @@ import (
 	"math/rand"
 	"time"
 
-	//"github.com/aliok/secim-batch-plain-operator/pkg/secimOperator"
 	"flag"
 	"path/filepath"
 	"os/user"
@@ -79,8 +78,6 @@ func main() {
 
 	createWorkQueue()
 
-	// createInitialPods(k8client)
-
 	startPollingPodEndpoints(k8client)
 
 	log.Println("Job done, writing results to ./output.json and ./erroredBoxes.txt")
@@ -105,21 +102,11 @@ func main() {
 		log.Fatalln("Error writing erroredBoxes to file, writing to STDOUT instead")
 		log.Println(string(resultJson))
 	}
-
-	//log.Println("Final result")
-	//currentResultJson, err := json.MarshalIndent(finalResult, "", "  ")
-	//if err != nil {
-	//	fmt.Println("error marshalling current result:", err)
-	//}
-	//log.Println(string(currentResultJson))
-	//
-	//log.Println("Final errors")
-	//log.Println(finalErrors)
 }
 
-// poll pod list, then check if the pods are done.
+// pull pod list, then check if the pods are done.
 // if done, record the output and the errors. then pop one from the queue and create a new pod.
-// if not done, don't do anything. it will be checked in the next poll.
+// if not done, don't do anything. it will be checked in the next pull.
 func startPollingPodEndpoints(k8client *kubernetes.Clientset) {
 	log.Printf("Starting pod endpoint polling")
 
@@ -194,14 +181,6 @@ func startPollingPodEndpoints(k8client *kubernetes.Clientset) {
 	}
 }
 
-func fmtDuration(d time.Duration) string {
-	d = d.Round(time.Second)
-	h := d / time.Hour
-	d -= h * time.Hour
-	m := d / time.Minute
-	return fmt.Sprintf("%02d:%02d", h, m)
-}
-
 func deletePod(k8client *kubernetes.Clientset, pod apiv1.Pod) {
 	err := k8client.CoreV1().Pods(NAMESPACE).Delete(pod.Name, metav1.NewDeleteOptions(0))
 	if err != nil {
@@ -267,19 +246,6 @@ func isPodDone(pod apiv1.Pod) bool {
 	return false
 }
 
-//func createInitialPods(k8client *kubernetes.Clientset) {
-//	for i := 0; i < PARALLELISM; i++ {
-//		podRequest := queue[0]
-//		queue = queue[1:]
-//
-//		// not interested in the response. we're polling them anyway
-//		if _, err := createPod(podRequest, k8client); err != nil {
-//			log.Printf("Unable to create pod \n")
-//			log.Fatal(err)
-//		}
-//	}
-//}
-
 func createPod(podReq *apiv1.Pod, k8client *kubernetes.Clientset) (*apiv1.Pod, error) {
 	return k8client.CoreV1().Pods(NAMESPACE).Create(podReq);
 }
@@ -301,7 +267,7 @@ func createWorkQueue() {
 					{
 						Name:            "secim-batch-container",
 						Image:           "aliok/secim-batch-container",
-						ImagePullPolicy: apiv1.PullIfNotPresent,
+						ImagePullPolicy: apiv1.PullAlways,
 						Env: []apiv1.EnvVar{
 							{
 								Name:  "BATCH_SIZE",
