@@ -7,6 +7,7 @@ Then collects their results and saves it locally.
 Collected and saved result can be analyzed using a script like this one: <https://gist.github.com/aliok/5b739b6273ec37fb58eb6e90012e5e17>
 
 I implemented this operator to practice Kubernetes operators. Kubernetes Jobs would be a better fit for this kind of purpose in production.
+I intentionally didn't use the Operator Framework as I wanted to compare things written using that one and without that one.
 
 -----
 
