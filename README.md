@@ -1,23 +1,30 @@
+### NOTE:
+
+My initial intention was to create a Kubernetes operator using the Operator Framework, but it seemed like an overkill and I just kept it as a plain controller.
+
+Ilk fikrim Operator Framework kullanarak bir Kubernetes operatoru yazmakti ama controller yazip biraktim.
+
+
 ### Introduction / Giris
 
-This operator is created to manage some Kubernetes pods that retrieve the election data for Turkey in 2019.
+This controller is created to manage some Kubernetes pods that retrieve the election data for Turkey in 2019.
 It creates and manages bunch of pods of this image: <https://github.com/aliok/secim-batch-container>
 Then collects their results and saves it locally.
 
 Collected and saved result can be analyzed using a script like this one: <https://gist.github.com/aliok/5b739b6273ec37fb58eb6e90012e5e17>
 
-I implemented this operator to practice Kubernetes operators. Kubernetes Jobs would be a better fit for this kind of purpose in production.
+I implemented this controller to practice Kubernetes controllers. Kubernetes Jobs would be a better fit for this kind of purpose in production.
 I intentionally didn't use the Operator Framework as I wanted to compare things written using that one and without that one.
 
 -----
 
-Bu operator, Kubernetes uzerinde 2019 yerel secimlerinin sonuclarini toplayan podlari yonetmek icin olusturuldu. 
+Bu controller, Kubernetes uzerinde 2019 yerel secimlerinin sonuclarini toplayan podlari yonetmek icin olusturuldu. 
 Su imaj <https://github.com/aliok/secim-batch-container> ile pod olusturup bunlari yonetir. Podlarin topladigi verileri
 alir ve kaydeder.
 
 Kaydedilen sonuclari suradaki gibi bir script ile analiz edebilirsiniz: <https://gist.github.com/aliok/5b739b6273ec37fb58eb6e90012e5e17>
 
-Bu operatoru Kubernetes operatorleri ile pratik yapmak icin olusturdum. Bir production ortaminda Kubernetes Jobs konseptini kullanmak daha makul. 
+Bu controlleru Kubernetes controllerleri ile pratik yapmak icin olusturdum. Bir production ortaminda Kubernetes Jobs konseptini kullanmak daha makul. 
 
 
 ### Gelistirilebilecek seyler / Room for improvement
@@ -53,7 +60,7 @@ make build_linux
 
 ### Running in the cluster / Cluster icinde calistirma
 
-The operator code is currently using a hardcoded out-of-cluster config. That means, if you want to run it in the cluster,
+The controller code is currently using a hardcoded out-of-cluster config. That means, if you want to run it in the cluster,
 you need to modify the code LOL :)
 
 This is not that much of a work, but it is not in my point of experimenting with Kubernetes API. I don't care! 
